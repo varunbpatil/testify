@@ -1,3 +1,5 @@
+[![testify](https://github.com/varunbpatil/testify/actions/workflows/ci.yml/badge.svg)](https://github.com/varunbpatil/testify/actions/workflows/ci.yml)
+
 # Parallel Testify Suite
 
 The stretchr/testify suite [does not support](https://redirect.github.com/stretchr/testify/blob/master/README.md#suite-package)
