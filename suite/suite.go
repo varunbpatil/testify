@@ -192,7 +192,7 @@ func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 		// This catches panics in the subtest setup and fails the test.
 		defer recoverAndFailOnPanic(newS)
 
-		if err := SetField(newS.suite, "Suite", newS); err != nil {
+		if err := setField(newS.suite, "Suite", newS); err != nil {
 			panic("make sure that your test suite embeds `*suite.Suite`")
 		}
 
@@ -227,38 +227,15 @@ func Run[T any, G any](testingT *testing.T) {
 	s.setG(new(G))
 	s.setS(suite)
 
-	// Setup stats.
-	var stats *SuiteInformation
-	if _, ok := any(suite).(WithStats); ok {
-		stats = newSuiteInformation()
+	// This catches panics in the test suite setup and fails the test.
+	defer recoverAndFailOnPanic(s)
+
+	if err := setField(s.suite, "Suite", s); err != nil {
+		panic("make sure that your test suite embeds `*suite.Suite`")
 	}
 
 	methodFinder := reflect.TypeOf(suite)
 	suiteName := methodFinder.Elem().Name()
-
-	// [T.Cleanup] ensures that the stats handler is called only after all the tests in the
-	// suite are done, even in the case of parallel tests. This cannot be accomplished with a
-	// simple defer statement because the deferred function will execute before the subtests
-	// even start running (in the case of parallel subtests).
-	if stats != nil {
-		s.Cleanup(func() {
-			stats.End = time.Now()
-			if suiteWithStats, ok := any(suite).(WithStats); ok {
-				suiteWithStats.HandleStats(suiteName, stats)
-			}
-		})
-
-		// Start the stats collection.
-		stats.Start = time.Now()
-	}
-
-	// This catches panics in the test suite setup and fails the test. The cleanup function
-	// above to finalize the stats is called after this deferred function is executed.
-	defer recoverAndFailOnPanic(s)
-
-	if err := SetField(s.suite, "Suite", s); err != nil {
-		panic("make sure that your test suite embeds `*suite.Suite`")
-	}
 
 	// Iterate over all the methods of the test suite and prepare the list of tests to run.
 	var methods []reflect.Method
@@ -277,6 +254,29 @@ func Run[T any, G any](testingT *testing.T) {
 	if len(methods) == 0 {
 		testingT.Log("warning: no tests to run")
 		return
+	}
+
+	// Setup stats.
+	var stats *SuiteInformation
+	if _, ok := any(suite).(WithStats); ok {
+		stats = newSuiteInformation()
+	}
+
+	// [T.Cleanup] ensures that the stats handler is called only after all the tests in the
+	// suite are done, even in the case of parallel tests. This cannot be accomplished with a
+	// simple defer statement because the deferred function will execute before the subtests
+	// even start running (in the case of parallel subtests).
+	if stats != nil {
+		s.Cleanup(func() {
+			defer recoverAndFailOnPanic(s)
+			stats.End = time.Now()
+			if suiteWithStats, ok := any(suite).(WithStats); ok {
+				suiteWithStats.HandleStats(suiteName, stats)
+			}
+		})
+
+		// Start the stats collection.
+		stats.Start = time.Now()
 	}
 
 	// [T.Cleanup] ensures that the suite teardown method is executed only after all the tests
@@ -312,6 +312,13 @@ func Run[T any, G any](testingT *testing.T) {
 				newS.setG(s.G())
 				newS.setS(newSuite)
 
+				// This catches panics in the test setup and fails the test.
+				defer recoverAndFailOnPanic(newS)
+
+				if err := setField(newS.suite, "Suite", newS); err != nil {
+					panic("make sure that your test suite embeds `*suite.Suite`")
+				}
+
 				// [T.Cleanup] ensures that the stats are updated only after all the
 				// sub-tests of this test are done, even in the case of parallel tests.
 				if stats != nil {
@@ -319,15 +326,6 @@ func Run[T any, G any](testingT *testing.T) {
 
 					// Start the stats collection.
 					stats.start(method.Name)
-				}
-
-				// This catches panics in the test setup and fails the test. The
-				// cleanup function above to finalize the stats is called after this
-				// deferred function is executed.
-				defer recoverAndFailOnPanic(newS)
-
-				if err := SetField(newS.suite, "Suite", newS); err != nil {
-					panic("make sure that your test suite embeds `*suite.Suite`")
 				}
 
 				// The order of calls are: SetupTest -> BeforeTest -> Test ->
@@ -394,8 +392,8 @@ func methodFilter(name string) (bool, error) {
 	return true, nil
 }
 
-// SetField sets the value of a field in a struct.
-func SetField[T any](input *T, fieldName string, value any) error {
+// setField sets the value of a field in a struct.
+func setField[T any](input *T, fieldName string, value any) error {
 	// Use reflection to get the field by name
 	field := reflect.ValueOf(input).Elem().FieldByName(fieldName)
 	if !field.IsValid() {

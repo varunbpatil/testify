@@ -294,6 +294,12 @@ func (s *panickingSuite) TearDownSuite() {
 	}
 }
 
+func (s *panickingSuite) HandleStats(suiteName string, stats *suite.SuiteInformation) {
+	if strings.Contains(s.Name(), "/InHandleStats") {
+		panic("oops in handle stats")
+	}
+}
+
 func TestSuiteRecoverPanic(t *testing.T) {
 	ok := true
 	panickingTests := []testing.InternalTest{
@@ -335,6 +341,10 @@ func TestSuiteRecoverPanic(t *testing.T) {
 		},
 		{
 			Name: t.Name() + "/InTearDownSuite",
+			F:    func(t *testing.T) { suite.Run[panickingSuite, panickingSuiteGlobalData](t) },
+		},
+		{
+			Name: t.Name() + "/InHandleStats",
 			F:    func(t *testing.T) { suite.Run[panickingSuite, panickingSuiteGlobalData](t) },
 		},
 	}
