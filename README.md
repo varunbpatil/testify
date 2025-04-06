@@ -2,9 +2,11 @@
 
 # Parallel Testify Suite
 
-The stretchr/testify suite [does not support](https://redirect.github.com/stretchr/testify/blob/master/README.md#suite-package)
-parallel tests, which makes it, quite frankly, unusable in modern Go applications. The stretchr/testify project has no plan to
-support it because it requires backward-incompatible changes and there is no plan for a v2 version.
+The stretchr/testify suite [does not
+support](https://redirect.github.com/stretchr/testify/blob/master/README.md#suite-package) parallel
+tests, which makes it, in my opinion, unusable in modern Go applications. The stretchr/testify
+project has [no plan](https://github.com/stretchr/testify/discussions/1560) to support it because it
+requires backward-incompatible changes and there is no plan for a v2 version.
 
 You can just use the stdlib `testing` package if you want parallel tests. Its 2025!! You almost certainly do. But,
 `Suite` comes with a host of useful helper methods that have the potential to reduce a lot of boilerplate code.
@@ -18,18 +20,17 @@ You will also see that in [suite_test.go](suite/suite_test.go), we implement all
 the [stretchr/testify suite](https://redirect.github.com/stretchr/testify/blob/master/suite/suite_test.go)
 but modified to use the parallel testify suite implemented by this package.
 
-## What about other parallel testify suite implementations floating around in the ether?
+## Other parallel testify suite implementations
 
-Here are a couple of the most popular:
-1. https://redirect.github.com/stretchr/testify/pull/1109
-2. https://redirect.github.com/huma-engineering/testify
+Here is one that I know of - https://github.com/huma-engineering/testify
 
-The second one in the list is simply a copy of the first PR extracted into a github repo.
-Apart from being mostly unmaintained, it simply doesn't work as you can see from this
-[issue](https://redirect.github.com/huma-engineering/testify/issues/5) where the teardown
-methods are called before the (parallel) sub-tests actually complete.
+This is basically a fork of the PR - [Add support for parallel sub-tests and remove suite.Suite
+pseudo-interitance](https://redirect.github.com/stretchr/testify/pull/1109). Apart from being mostly
+unmaintained, it simply doesn't work as you can see from this
+[issue](https://redirect.github.com/huma-engineering/testify/issues/5) where the teardown methods
+are called before the (parallel) sub-tests actually complete.
 
-The reason for this is pretty simple. You cannot use deferred functions to execute teardown
+The reason for this is simple. You cannot use deferred functions to execute teardown
 code when working with parallel sub-tests. The parallel sub-tests won't even start running
 until after the deferred function has executed and the parent test has returned. This is
 the whole reason why [Cleanup](https://golang.org/pkg/testing/#T.Cleanup) was introduced
@@ -148,7 +149,7 @@ func TestSuiteParallel(t *testing.T) {
 As you can see, even without me showing any of the data access, the stdlib version, with its nested structure,
 is much harder to grok than the parallel testify suite. This is why the parallel testify suite is so useful.
 
-## Migrating from existing (non-parallel) testify suite
+## Migrating from stretchr/testify suite
 
 One of the goals of this package is to keep the interfaces as similar as posssible to the stretchr/testify suite.
 To this end, there are no changes to the interfaces of the setup/teardown methods. The other changes listed below
