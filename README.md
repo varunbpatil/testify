@@ -38,6 +38,8 @@ in Go 1.14.
 
 ## How does it work?
 
+![architecture_diagram.svg](assets/architecture_diagram.svg)
+
 Here is a very simple outline of using this package.
 
 ```go
