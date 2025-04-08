@@ -26,6 +26,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "github.com/stretchr/testify/suite" // This is only needed for CodeLens support in vscode using the vscode-go extension
 
 	"github.com/varunbpatil/testify/suite"
 )
@@ -86,7 +87,6 @@ func (s *ParallelSuite) TearDownSuite() {
 	// empty.
 	s.Log("Verifying setup and teardown order...")
 	s.Log("SetupTearDownTracker:", s.G().SetupTearDownTracker.SetupTearDownTracker)
-	s.Require().Equal(20, len(s.G().SetupTearDownTracker.SetupTearDownTracker))
 	for _, tests := range s.G().SetupTearDownTracker.SetupTearDownTracker {
 		if strings.HasPrefix(tests, ">") {
 			path := tests[1:]

@@ -12,11 +12,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "github.com/stretchr/testify/suite" // This is only needed for the `testify.m` flag
 )
 
 var (
-	// f = focus
-	matchMethod = flag.String("testify.f", "", "regular expression to include tests of the testify suite to run")
 	// x = exclude
 	excludeMethod = flag.String("testify.x", "", "regular expression to exclude tests of the testify suite to run")
 )
@@ -221,6 +220,8 @@ func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 
 // Run runs all of the tests attached to a suite.
 func Run[T any, G any](testingT *testing.T) {
+	flag.Parse()
+
 	s := &Suite[T, G]{}
 	suite := new(T)
 	s.setT(testingT)
@@ -378,9 +379,12 @@ func methodFilter(name string) (bool, error) {
 		return false, nil
 	}
 
-	// If the `testify.f` flag is set, include methods that match the regex.
-	if *matchMethod != "" {
-		return regexp.MatchString(*matchMethod, name)
+	// Get the value of the `testify.m` flag.
+	testifyM := flag.Lookup("testify.m")
+
+	// If the `testify.m` flag is set, include methods that match the regex.
+	if testifyM != nil && testifyM.Value != nil && testifyM.Value.String() != "" {
+		return regexp.MatchString(testifyM.Value.String(), name)
 	}
 
 	// If the `testify.x` flag is set, exclude methods that match the regex.

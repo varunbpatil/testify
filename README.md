@@ -43,7 +43,13 @@ in Go 1.14.
 Here is a very simple outline of using this package.
 
 ```go
-import "github.com/varunbpatil/testify/suite"
+import (
+    "github.com/varunbpatil/testify/suite"
+    
+    // This import is optional. It is only required for CodeLens support
+    // in vscode with the vscode-go extension.
+    _ "github.com/stretchr/testify/suite"
+)
 
 type ParallelSuite struct {
     // This must be embedded.
@@ -231,13 +237,28 @@ func (s *MyTestSuite) TestOne() {
 ## Test flags
 
 The stretchr/testify suite exposes a flag named `-testify.m` to control which methods to selectively
-execute in the test suite. Since this package cannot re-use that flag, there are two other flags:
-1. `-testify.f` which does the same thing as `-testify.m` in that it includes tests that match the regex. `f` here stands for "focus".
-2. `-testify.x` which does the opposite of `-testify.m` in that it excludes tests that match the regex. `x` here stands for "exclude".
+execute in the test suite. This works in exactly the same way with the parallel testify suite.
+
+In addition, there is new flag `-testify.x` which does the opposite of `-testify.m` in that it
+excludes tests that match the regex.
 
 ## Supported Go versions
 
 This package currently works with Go 1.18+ due to its use of generics.
+
+## VSCode support
+
+The [vscode-go](https://github.com/golang/vscode-go) extension relies on the `github.com/stretchr/testify/suite` package
+[being imported](https://github.com/golang/vscode-go/blob/f122b06045fd67bdc0ea6bc6612ed9831932dc52/extension/src/testUtils.ts#L764)
+for features like CodeLens to work. If you need these features, you must import it in your test files.
+
+```go
+import (
+    "github.com/varunbpatil/testify/suite"
+    
+    // Completely optional. Only required for CodeLens support in vscode using the vscode-go extension.
+    _ "github.com/stretchr/testify/suite"
+```
 
 ## License
 
