@@ -26,6 +26,7 @@ type Suite[T any, G any] struct {
 	testingT *testing.T
 	suite    *T // user-defined test suite
 	g        *G // global data for the suite
+	parent   *T // for subtests, the parent suite instance
 }
 
 // T retrieves the current *testing.T context.
@@ -118,6 +119,10 @@ func (s *Suite[T, G]) Parallel() {
 	s.T().Parallel()
 }
 
+func (s *Suite[T, G]) Parent() *T {
+	return s.parent
+}
+
 // setT sets the current *testing.T context.
 func (s *Suite[T, G]) setT(testingT *testing.T) {
 	if s.T() != nil {
@@ -142,6 +147,14 @@ func (s *Suite[T, G]) setS(suite *T) {
 		panic("Suite.suite already set, can't overwrite")
 	}
 	s.suite = suite
+}
+
+// setP sets the parent suite for the current test.
+func (s *Suite[T, G]) setP(suite *T) {
+	if s.parent != nil {
+		panic("Suite.parent already set, can't overwrite")
+	}
+	s.parent = suite
 }
 
 // Require returns a require context for suite.
@@ -187,6 +200,7 @@ func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 		newS.setT(testingT)
 		newS.setG(s.G())
 		newS.setS(newSuite)
+		newS.setP(s.suite)
 
 		// This catches panics in the subtest setup and fails the test.
 		defer recoverAndFailOnPanic(newS)
@@ -227,6 +241,7 @@ func Run[T any, G any](testingT *testing.T) {
 	s.setT(testingT)
 	s.setG(new(G))
 	s.setS(suite)
+	s.setP(nil)
 
 	// This catches panics in the test suite setup and fails the test.
 	defer recoverAndFailOnPanic(s)
@@ -312,6 +327,7 @@ func Run[T any, G any](testingT *testing.T) {
 				newS.setT(testingT)
 				newS.setG(s.G())
 				newS.setS(newSuite)
+				newS.setP(s.suite)
 
 				// This catches panics in the test setup and fails the test.
 				defer recoverAndFailOnPanic(newS)
