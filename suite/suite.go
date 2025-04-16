@@ -43,22 +43,6 @@ func (s *Suite[T, G]) Cleanup(f func()) {
 	s.T().Cleanup(f)
 }
 
-func (s *Suite[T, G]) Error(args ...any) {
-	s.T().Error(args...)
-}
-
-func (s *Suite[T, G]) Errorf(format string, args ...any) {
-	s.T().Errorf(format, args...)
-}
-
-func (s *Suite[T, G]) Fail() {
-	s.T().Fail()
-}
-
-func (s *Suite[T, G]) FailNow() {
-	s.T().FailNow()
-}
-
 func (s *Suite[T, G]) Failed() bool {
 	return s.T().Failed()
 }
@@ -182,8 +166,8 @@ func recoverAndFailOnPanic[T any, G any](s *Suite[T, G]) {
 func failOnPanic[T any, G any](s *Suite[T, G], r any) {
 	s.Helper()
 	if r != nil {
-		s.Errorf("test panicked: %v\n%s", r, debug.Stack())
-		s.FailNow()
+		s.T().Errorf("test panicked: %v\n%s", r, debug.Stack())
+		s.T().FailNow()
 	}
 }
 
