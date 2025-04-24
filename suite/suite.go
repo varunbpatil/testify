@@ -193,20 +193,22 @@ func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 			panic("make sure that your test suite embeds `*suite.Suite`")
 		}
 
-		// [T.Cleanup] ensures that the teardown method is executed after all the subtests
-		// (of this subtest) are done, even in the case of parallel subtests. This cannot be
-		// accomplished with a simple defer statement because the deferred function will
-		// execute before the subtests even start running (in the case of parallel subtests).
+		// Setup the subtest.
+		if setupSubTest, ok := any(newSuite).(SetupSubTest); ok {
+			setupSubTest.SetupSubTest()
+		}
+
+		// [T.Cleanup], unlike defer, ensures that the teardown method is executed after all
+		// the subtests (of this subtest) are done, even in the case of parallel subtests.
+		//
+		// We register [TearDownSubTest] after calling [SetupSubTest] because we want
+		// [TearDownSubTest] to run before any cleanup functions registered within
+		// [SetupSubTest].
 		if tearDownSubTest, ok := any(newSuite).(TearDownSubTest); ok {
 			newS.Cleanup(func() {
 				defer recoverAndFailOnPanic(newS)
 				tearDownSubTest.TearDownSubTest()
 			})
-		}
-
-		// Setup the subtest.
-		if setupSubTest, ok := any(newSuite).(SetupSubTest); ok {
-			setupSubTest.SetupSubTest()
 		}
 
 		// Call the subtest function with the new instance of the suite.
@@ -239,14 +241,14 @@ func Run[T any, G any](testingT *testing.T) {
 
 	// Iterate over all the methods of the test suite and prepare the list of tests to run.
 	var methods []reflect.Method
+	f, err := methodFilter()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(1)
+	}
 	for i := 0; i < methodFinder.NumMethod(); i++ {
 		method := methodFinder.Method(i)
-		ok, err := methodFilter(method.Name)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "testify: invalid regexp: %s\n", err)
-			os.Exit(1)
-		}
-		if ok {
+		if f(method.Name) {
 			methods = append(methods, method)
 		}
 	}
@@ -262,10 +264,8 @@ func Run[T any, G any](testingT *testing.T) {
 		stats = newSuiteInformation()
 	}
 
-	// [T.Cleanup] ensures that the stats handler is called only after all the tests in the
-	// suite are done, even in the case of parallel tests. This cannot be accomplished with a
-	// simple defer statement because the deferred function will execute before the subtests
-	// even start running (in the case of parallel subtests).
+	// [T.Cleanup], unlike defer, ensures that the stats handler is called only after all the
+	// tests in the suite are done, even in the case of parallel tests.
 	if stats != nil {
 		s.Cleanup(func() {
 			defer recoverAndFailOnPanic(s)
@@ -279,21 +279,21 @@ func Run[T any, G any](testingT *testing.T) {
 		stats.Start = time.Now()
 	}
 
-	// [T.Cleanup] ensures that the suite teardown method is executed only after all the tests
-	// in the suite are done, even in the case of parallel tests. This cannot be accomplished
-	// with a simple defer statement because the deferred function will execute before the
-	// subtests even start running (in the case of parallel subtests).
+	// Setup the suite.
+	if setupAllSuite, ok := any(suite).(SetupAllSuite); ok {
+		setupAllSuite.SetupSuite()
+	}
+
+	// [T.Cleanup], unlike defer, ensures that the suite teardown method is executed only after
+	// all the tests in the suite are done, even in the case of parallel tests.
+	//
+	// We register [TearDownAllSuite] after calling [SetupAllSuite] because we want
+	// [TearDownAllSuite] to run before any cleanup functions registered within [SetupAllSuite].
 	if tearDownAllSuite, ok := any(suite).(TearDownAllSuite); ok {
 		s.Cleanup(func() {
 			defer recoverAndFailOnPanic(s)
 			tearDownAllSuite.TearDownSuite()
 		})
-	}
-
-	// Setup the suite. The cleanup function is already registered above. So, it will be called
-	// even if the setup function panics.
-	if setupAllSuite, ok := any(suite).(SetupAllSuite); ok {
-		setupAllSuite.SetupSuite()
 	}
 
 	// Each method of the test suite is executed as a subtest of the suite.
@@ -320,8 +320,9 @@ func Run[T any, G any](testingT *testing.T) {
 					panic("make sure that your test suite embeds `*suite.Suite`")
 				}
 
-				// [T.Cleanup] ensures that the stats are updated only after all the
-				// sub-tests of this test are done, even in the case of parallel tests.
+				// [T.Cleanup], unlike defer, ensures that the stats are updated
+				// only after all the sub-tests of this test are done, even in the
+				// case of parallel tests.
 				if stats != nil {
 					newS.Cleanup(func() { stats.end(method.Name, !newS.Failed()) })
 
@@ -331,12 +332,13 @@ func Run[T any, G any](testingT *testing.T) {
 
 				// The order of calls are: SetupTest -> BeforeTest -> Test ->
 				// AfterTest -> TearDownTest
-				//
-				// Registering the cleanup methods before their corresponding setup
-				// methods ensures that the cleanup methods are always called. This
-				// cannot be accomplished with a simple defer statement because the
-				// deferred function will execute before the subtests even start
-				// running (in the case of parallel subtests).
+				if setupTestSuite, ok := any(newSuite).(SetupTestSuite); ok {
+					setupTestSuite.SetupTest()
+				}
+
+				// We register [TearDownTestSuite] after calling [SetupTestSuite]
+				// because we want [TearDownTestSuite] to run before any cleanup
+				// functions registered within [SetupTestSuite].
 				if tearDownTestSuite, ok := any(newSuite).(TearDownTestSuite); ok {
 					newS.Cleanup(func() {
 						defer recoverAndFailOnPanic(newS)
@@ -344,19 +346,18 @@ func Run[T any, G any](testingT *testing.T) {
 					})
 				}
 
-				if setupTestSuite, ok := any(newSuite).(SetupTestSuite); ok {
-					setupTestSuite.SetupTest()
+				if beforeTestSuite, ok := any(newSuite).(BeforeTest); ok {
+					beforeTestSuite.BeforeTest(methodFinder.Elem().Name(), method.Name)
 				}
 
+				// We register [AfterTest] after calling [BeforeTest] because we
+				// want [AfterTest] to run before any cleanup functions registered
+				// within [BeforeTest].
 				if afterTestSuite, ok := any(newSuite).(AfterTest); ok {
 					newS.Cleanup(func() {
 						defer recoverAndFailOnPanic(newS)
 						afterTestSuite.AfterTest(suiteName, method.Name)
 					})
-				}
-
-				if beforeTestSuite, ok := any(newSuite).(BeforeTest); ok {
-					beforeTestSuite.BeforeTest(methodFinder.Elem().Name(), method.Name)
 				}
 
 				method.Func.Call([]reflect.Value{reflect.ValueOf(newSuite)})
@@ -373,27 +374,47 @@ func Run[T any, G any](testingT *testing.T) {
 }
 
 // Filtering methods according to set regular expression.
-func methodFilter(name string) (bool, error) {
-	// Exclude methods that don't start with "Test".
-	if ok, _ := regexp.MatchString("^Test", name); !ok {
-		return false, nil
+func methodFilter() (func(name string) bool, error) {
+	var regexpTestFunctions, regexpInclude, regexpExclude *regexp.Regexp
+	var err error
+
+	// Regular expression to only include methods that start with "Test".
+	regexpTestFunctions = regexp.MustCompile("^Test")
+
+	// Regular expression to include methods that match the regex set in the `testify.m` flag.
+	if testifyM := flag.Lookup("testify.m"); testifyM != nil && testifyM.Value != nil && testifyM.Value.String() != "" {
+		regexpInclude, err = regexp.Compile(testifyM.Value.String())
+		if err != nil {
+			return nil, fmt.Errorf("testify: invalid regular expression for `testify.m`: %w", err)
+		}
 	}
 
-	// Get the value of the `testify.m` flag.
-	testifyM := flag.Lookup("testify.m")
-
-	// If the `testify.m` flag is set, include methods that match the regex.
-	if testifyM != nil && testifyM.Value != nil && testifyM.Value.String() != "" {
-		return regexp.MatchString(testifyM.Value.String(), name)
-	}
-
-	// If the `testify.x` flag is set, exclude methods that match the regex.
+	// Regular expression to exclude methods that match the regex set in the `testify.x` flag.
 	if *excludeMethod != "" {
-		match, err := regexp.MatchString(*excludeMethod, name)
-		return !match, err
+		regexpExclude, err = regexp.Compile(*excludeMethod)
+		if err != nil {
+			return nil, fmt.Errorf("testify: invalid regular expression for `testify.x`: %w", err)
+		}
 	}
 
-	return true, nil
+	return func(name string) bool {
+		// Exclude methods that don't start with "Test".
+		if ok := regexpTestFunctions.MatchString(name); !ok {
+			return false
+		}
+
+		// If the `testify.m` flag is set, include methods that match the regex.
+		if regexpInclude != nil {
+			return regexpInclude.MatchString(name)
+		}
+
+		// If the `testify.x` flag is set, exclude methods that match the regex.
+		if regexpExclude != nil {
+			return !regexpExclude.MatchString(name)
+		}
+
+		return true
+	}, nil
 }
 
 // setField sets the value of a field in a struct.
