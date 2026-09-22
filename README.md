@@ -142,7 +142,7 @@ func TestSuiteParallel(t *testing.T) {
 
                 // Register TearDownSubTest to be executed after all sub-tests are done.
                 // This is guaranteed to wait until all sub-tests are done before executing.
-                t.Cleanup(func() { yetAnotherSuiteInstance.TearDownTest() })
+                t.Cleanup(func() { yetAnotherSuiteInstance.TearDownSubTest() })
 
                 // Setup sub-test.
                 yetAnotherSuiteInstance.SetupSubTest()
@@ -233,6 +233,35 @@ func (s *MyTestSuite) TestOne() {
     s.Log("running test:", s.Name(), "with global data:", s.G().myVariable)
 }
 ```
+
+The global data (`*G`) is a single instance shared by the entire suite. Every test and
+subtest sees the same pointer, so values you set in `SetupSuite()` (which completes
+before any test starts) are visible everywhere. Because tests run in parallel, any
+concurrent *mutation* of the global data from inside tests/subtests must be
+synchronized by you (for example with a mutex).
+
+### Per-test data in subtests
+
+Each test and each subtest runs on its own **zero-valued** instance of the suite, so
+per-test data set in `SetupTest()` is *not* copied into subtests:
+
+```go
+func (s *MyTestSuite) TestOne() {
+    s.myLocalData = "only this test sees me"
+
+    s.Run("sub1", func(sub *MyTestSuite) {
+        // sub.myLocalData is the zero value here — data set on the parent
+        // instance (s) is not inherited by the subtest instance.
+        // Initialize subtest data in SetupSubTest(), or read the parent's
+        // per-test data explicitly:
+        sub.myLocalData = sub.Parent().myLocalData
+    })
+}
+```
+
+`Parent()` returns the suite instance that spawned the current test/subtest
+(and `nil` on the top-level suite instance created by `Run`), which is the only
+way to reach the parent's per-test data.
 
 ## Test flags
 

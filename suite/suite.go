@@ -35,6 +35,14 @@ func (s *Suite[T, G]) T() *testing.T {
 }
 
 // G retrieves the global data for the suite.
+//
+// The returned *G is a single instance shared by the whole suite: it is created
+// once per [Run] invocation and the same pointer is visible from every test and
+// subtest. Values written to it from SetupSuite (or from the test entrypoint
+// before calling [Run]) are safely visible to all tests, because suite setup
+// completes before any test starts. However, tests and subtests run in parallel,
+// so any concurrent mutation of the shared global data from within tests must be
+// synchronized by the caller (e.g. with a mutex).
 func (s *Suite[T, G]) G() *G {
 	return s.g
 }
@@ -103,6 +111,18 @@ func (s *Suite[T, G]) Parallel() {
 	s.T().Parallel()
 }
 
+// Parent returns the suite instance that spawned the current test or subtest.
+//
+// Every test and subtest runs on its own zero-valued suite instance, so the
+// per-test data of the parent is only reachable through this accessor:
+//
+//	func (s *MySuite) TestOne() {
+//		s.Run("sub", func(sub *MySuite) {
+//			sub.T().Log(sub.Parent().someField)
+//		})
+//	}
+//
+// It returns nil when called on the top-level suite instance created by [Run].
 func (s *Suite[T, G]) Parent() *T {
 	return s.parent
 }
@@ -171,27 +191,42 @@ func failOnPanic[T any, G any](s *Suite[T, G], r any) {
 	}
 }
 
+// newSuiteInstance creates a fresh, zero-valued instance of the suite type T for a
+// test or subtest. The new instance gets its own testing.T context and its own
+// (zero-valued) per-test data, while sharing the parent's global data.
+// The parent instance is linked via [Suite.Parent].
+//
+// The caller is responsible for registering panic recovery (and any
+// setup/teardown hooks) for the returned instance.
+func (s *Suite[T, G]) newSuiteInstance(testingT *testing.T) (newS *Suite[T, G], newSuite *T) {
+	newS = &Suite[T, G]{}
+	newSuite = new(T)
+	newS.setT(testingT)
+	newS.setG(s.G())
+	newS.setS(newSuite)
+	newS.setP(s.suite)
+
+	if err := setField(newS.suite, "Suite", newS); err != nil {
+		// Fail the test instead of leaving a broken suite instance behind.
+		// Same failure mode as a panic in setup, handled by recoverAndFailOnPanic.
+		failOnPanic(newS, "make sure that your test suite embeds `*suite.Suite`")
+	}
+
+	return newS, newSuite
+}
+
 // Run provides suite functionality around golang subtests. It should be
 // called in place of t.Run(name, func(t *testing.T)) in test suite code.
-// The passed-in func will be executed as a subtest with a fresh instance of t.
+// The passed-in func will be executed as a subtest with a fresh, zero-valued
+// instance of the suite type T (so parent per-test data is not copied into
+// the subtest; use [Suite.Parent] to access it). Global data is shared.
 // Provides compatibility with go test pkg -run TestSuite/TestName/SubTestName.
 func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 	return s.T().Run(name, func(testingT *testing.T) {
-		// Each subtest gets a fresh instance of Suite.
-		// The global data is passed through to all new instances.
-		newS := &Suite[T, G]{}
-		newSuite := new(T)
-		newS.setT(testingT)
-		newS.setG(s.G())
-		newS.setS(newSuite)
-		newS.setP(s.suite)
+		newS, newSuite := s.newSuiteInstance(testingT)
 
 		// This catches panics in the subtest setup and fails the test.
 		defer recoverAndFailOnPanic(newS)
-
-		if err := setField(newS.suite, "Suite", newS); err != nil {
-			panic("make sure that your test suite embeds `*suite.Suite`")
-		}
 
 		// Setup the subtest.
 		if setupSubTest, ok := any(newSuite).(SetupSubTest); ok {
@@ -304,21 +339,10 @@ func Run[T any, G any](testingT *testing.T) {
 		test := testing.InternalTest{
 			Name: method.Name,
 			F: func(testingT *testing.T) {
-				// Each test gets a fresh instance of [Suite].
-				// The global data is passed through to all new instances.
-				newS := &Suite[T, G]{}
-				newSuite := new(T)
-				newS.setT(testingT)
-				newS.setG(s.G())
-				newS.setS(newSuite)
-				newS.setP(s.suite)
+				newS, newSuite := s.newSuiteInstance(testingT)
 
 				// This catches panics in the test setup and fails the test.
 				defer recoverAndFailOnPanic(newS)
-
-				if err := setField(newS.suite, "Suite", newS); err != nil {
-					panic("make sure that your test suite embeds `*suite.Suite`")
-				}
 
 				// [T.Cleanup], unlike defer, ensures that the stats are updated
 				// only after all the sub-tests of this test are done, even in the
