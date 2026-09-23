@@ -37,12 +37,17 @@ func (s *Suite[T, G]) T() *testing.T {
 // G retrieves the global data for the suite.
 //
 // The returned *G is a single instance shared by the whole suite: it is created
-// once per [Run] invocation and the same pointer is visible from every test and
-// subtest. Values written to it from SetupSuite (or from the test entrypoint
-// before calling [Run]) are safely visible to all tests, because suite setup
-// completes before any test starts. However, tests and subtests run in parallel,
-// so any concurrent mutation of the shared global data from within tests must be
-// synchronized by the caller (e.g. with a mutex).
+// once per [Run] invocation (or supplied to it) and the same pointer is visible
+// from every test and subtest. Values written to it from SetupSuite (or from the
+// test entrypoint before calling [Run]) are safely visible to all tests, because
+// suite setup completes before any test starts. However, tests and subtests run
+// in parallel, so any concurrent mutation of the shared global data from within
+// tests must be synchronized by the caller (e.g. with a mutex).
+//
+// If the suite embeds `*G` (for example `*GlobalData`), the same shared pointer
+// is also injected into that embedded field of every test instance, so global
+// data can be accessed as promoted fields (e.g. `s.DB`) instead of via this
+// accessor.
 func (s *Suite[T, G]) G() *G {
 	return s.g
 }
@@ -212,6 +217,12 @@ func (s *Suite[T, G]) newSuiteInstance(testingT *testing.T) (newS *Suite[T, G], 
 		failOnPanic(newS, "make sure that your test suite embeds `*suite.Suite`")
 	}
 
+	// If the suite embeds `*G`, point the embedded field at the shared global
+	// data so tests can access globals as promoted fields without [Suite.G].
+	if err := injectGlobalData(newSuite, newS.G()); err != nil {
+		failOnPanic(newS, err.Error())
+	}
+
 	return newS, newSuite
 }
 
@@ -254,21 +265,42 @@ func (s *Suite[T, G]) Run(name string, subtest func(suite *T)) bool {
 }
 
 // Run runs all of the tests attached to a suite.
-func Run[T any, G any](testingT *testing.T) {
+//
+// At most one globals argument may be passed: a pointer to the data shared by
+// all tests and subtests of the suite. When provided it is used as-is, letting
+// the caller build the shared state at the call site (before any test runs)
+// instead of in SetupSuite, with [Suite.G] inferred from the argument's type.
+// When omitted, a new zero-valued G is created for the run. Passing more than
+// one globals argument is an error.
+func Run[T any, G any](testingT *testing.T, globals ...*G) {
 	flag.Parse()
 
 	s := &Suite[T, G]{}
 	suite := new(T)
 	s.setT(testingT)
-	s.setG(new(G))
-	s.setS(suite)
-	s.setP(nil)
 
 	// This catches panics in the test suite setup and fails the test.
 	defer recoverAndFailOnPanic(s)
 
+	if len(globals) > 1 {
+		panic(fmt.Sprintf("Run: expected at most one globals argument, got %d", len(globals)))
+	}
+	if len(globals) > 0 && globals[0] != nil {
+		s.setG(globals[0])
+	} else {
+		s.setG(new(G))
+	}
+	s.setS(suite)
+	s.setP(nil)
+
 	if err := setField(s.suite, "Suite", s); err != nil {
 		panic("make sure that your test suite embeds `*suite.Suite`")
+	}
+
+	// If the suite embeds `*G`, point the embedded field at the shared global
+	// data so SetupSuite/TearDownSuite can access globals as promoted fields.
+	if err := injectGlobalData(suite, s.G()); err != nil {
+		panic(err.Error())
 	}
 
 	methodFinder := reflect.TypeOf(suite)
@@ -439,6 +471,50 @@ func methodFilter() (func(name string) bool, error) {
 
 		return true
 	}, nil
+}
+
+// injectGlobalData points the embedded global-data field of the suite instance
+// (if any) at the shared *G, so global data can be accessed as promoted fields
+// (e.g. `s.DB`) instead of via [Suite.G].
+//
+// Only a pointer field (`*G`) supports sharing: an embedded value (`G`) would be
+// copied into every test instance and silently diverge, so it is rejected.
+func injectGlobalData[T any, G any](suite *T, g *G) error {
+	elem := reflect.TypeOf((*T)(nil)).Elem()
+	gPtrType := reflect.TypeOf((*G)(nil))
+	gType := gPtrType.Elem()
+
+	var ptrName, valueName string
+	for i := 0; i < elem.NumField(); i++ {
+		field := elem.Field(i)
+		if !field.Anonymous {
+			continue
+		}
+		switch field.Type {
+		case gPtrType:
+			ptrName = field.Name
+		case gType:
+			valueName = field.Name
+		}
+	}
+
+	if valueName != "" {
+		return fmt.Errorf(
+			"embed *%s (a pointer) in the test suite so that global data is shared between tests; embedding %s by value would copy it into every test",
+			gType, gType,
+		)
+	}
+	if ptrName != "" {
+		field := reflect.ValueOf(suite).Elem().FieldByName(ptrName)
+		if !field.CanSet() {
+			return fmt.Errorf(
+				"the embedded global data type %s must be exported (its name must start with an uppercase letter); the suite runner cannot set an unexported embedded field",
+				gType,
+			)
+		}
+		field.Set(reflect.ValueOf(g))
+	}
+	return nil
 }
 
 // setField sets the value of a field in a struct.

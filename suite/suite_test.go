@@ -40,6 +40,12 @@ var allTestsFilter = func(_, _ string) (bool, error) { return true, nil }
 type ParallelSuite struct {
 	*suite.Suite[ParallelSuite, GlobalData]
 
+	// Global data can also be embedded as a pointer. The suite runner points
+	// this field at the same shared instance on every test/sub-test, so global
+	// data is accessible as promoted fields (e.g. `s.SetupTearDownTracker`)
+	// instead of via `s.G()`. The accessor still works either way.
+	*GlobalData
+
 	// All the per-test data is stored here.
 	// This will be unique to each test/sub-test.
 	PerTestData string
@@ -65,14 +71,12 @@ func (t *SetupTearDownTracker) append(s string) {
 // Suite level setup and teardown.
 func (s *ParallelSuite) SetupSuite() {
 	s.Log("SetupSuite:", s.Name())
-	s.G().GlobalData = "[G]"
-	s.G().SetupTearDownTracker = &SetupTearDownTracker{}
-	s.G().SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
+	s.SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
 }
 
 func (s *ParallelSuite) TearDownSuite() {
-	s.Log("TearDownSuite:", s.Name(), s.G().GlobalData)
-	s.G().SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
+	s.Log("TearDownSuite:", s.Name(), s.GlobalData)
+	s.SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
 
 	// Verify the setup and teardown order of the whole suite. Since the test names look like
 	// filesystem paths, we can use the filesystem to verify the order.
@@ -86,8 +90,8 @@ func (s *ParallelSuite) TearDownSuite() {
 	// a parent directory that doesn't exist or while trying to remove a directory that is not
 	// empty.
 	s.Log("Verifying setup and teardown order...")
-	s.Log("SetupTearDownTracker:", s.G().SetupTearDownTracker.SetupTearDownTracker)
-	for _, tests := range s.G().SetupTearDownTracker.SetupTearDownTracker {
+	s.Log("SetupTearDownTracker:", s.SetupTearDownTracker.SetupTearDownTracker)
+	for _, tests := range s.SetupTearDownTracker.SetupTearDownTracker {
 		if strings.HasPrefix(tests, ">") {
 			path := tests[1:]
 			err := os.Mkdir(path, 0755)
@@ -116,12 +120,12 @@ func (s *ParallelSuite) TearDownSuite() {
 func (s *ParallelSuite) SetupTest() {
 	s.Log("SetupTest:", s.Name())
 	s.PerTestData = fmt.Sprintf("{%s}", s.Name())
-	s.G().SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
+	s.SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
 }
 
 func (s *ParallelSuite) TearDownTest() {
 	s.Log("TearDownTest:", s.Name(), s.PerTestData)
-	s.G().SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
+	s.SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
 }
 
 func (s *ParallelSuite) BeforeTest(suiteName, testName string) {
@@ -136,12 +140,12 @@ func (s *ParallelSuite) AfterTest(suiteName, testName string) {
 func (s *ParallelSuite) SetupSubTest() {
 	s.Log("SetupSubTest:", s.Name())
 	s.PerTestData = fmt.Sprintf("(%s)", s.Name())
-	s.G().SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
+	s.SetupTearDownTracker.append(fmt.Sprintf(">%s", s.Name()))
 }
 
 func (s *ParallelSuite) TearDownSubTest() {
 	s.Log("TearDownSubTest:", s.Name(), s.PerTestData)
-	s.G().SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
+	s.SetupTearDownTracker.append(fmt.Sprintf("<%s", s.Name()))
 }
 
 // HandleStats is called when the test suite is finished.
@@ -189,7 +193,40 @@ func (suite *ParallelSuite) TestSkip() {
 // TestSuiteParallel is the main entrypoint for the test.
 func TestSuiteParallel(t *testing.T) {
 	t.Parallel()
-	suite.Run[ParallelSuite, GlobalData](t)
+
+	// Global data is constructed here, at the call site, and shared by every
+	// test and sub-test of the suite. `G` is inferred from the argument, so the
+	// type parameter only needs to name the suite.
+	globals := &GlobalData{
+		GlobalData:           "[G]",
+		SetupTearDownTracker: &SetupTearDownTracker{},
+	}
+
+	suite.Run[ParallelSuite](t, globals)
+}
+
+// suiteMultipleGlobals verifies that passing more than one globals argument to
+// Suite.Run fails loudly instead of silently ignoring the extras.
+type suiteMultipleGlobals struct {
+	*suite.Suite[suiteMultipleGlobals, suiteMultipleGlobalsData]
+}
+
+type suiteMultipleGlobalsData struct{}
+
+func (s *suiteMultipleGlobals) TestOne() {}
+
+func TestSuiteMultipleGlobals(t *testing.T) {
+	ok := testing.RunTests(allTestsFilter, []testing.InternalTest{{
+		Name: "TestMultipleGlobalsSuite",
+		F: func(t *testing.T) {
+			suite.Run[suiteMultipleGlobals](
+				t,
+				&suiteMultipleGlobalsData{},
+				&suiteMultipleGlobalsData{},
+			)
+		},
+	}})
+	assert.False(t, ok, "passing more than one globals argument should fail")
 }
 
 // SuiteRequireTwice is intended to test the usage of suite.Require in two

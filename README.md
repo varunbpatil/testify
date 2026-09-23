@@ -222,23 +222,73 @@ func (s *MyTestSuite) TestOne() {
 ```
 
 
-Access global data anywhere like so:
+### Global data
+
+Global data is the data common to all tests - DB connections, gRPC clients, etc. It lives in
+`G`, the second type parameter of `Suite[T, G]`, and is a **single instance shared by the
+entire suite**: every test and subtest sees the same pointer. There are three ways to work
+with it:
+
+**1. Access it via `s.G()`** - works from any test, subtest, or setup/teardown hook:
 
 ```go
-func (s *MyTestSuite) SetupSuite() { 
-    s.G().myVariable = myValue
+func (s *MyTestSuite) SetupSuite() {
+	s.G().myVariable = myValue
 }
 
 func (s *MyTestSuite) TestOne() {
-    s.Log("running test:", s.Name(), "with global data:", s.G().myVariable)
+	s.Log("using global data:", s.G().myVariable)
 }
 ```
 
-The global data (`*G`) is a single instance shared by the entire suite. Every test and
-subtest sees the same pointer, so values you set in `SetupSuite()` (which completes
-before any test starts) are visible everywhere. Because tests run in parallel, any
-concurrent *mutation* of the global data from inside tests/subtests must be
-synchronized by you (for example with a mutex).
+**2. Embed a pointer to it** - if the suite embeds `*GlobalData`, the runner points that
+field at the same shared instance on every test and subtest, so global data reads like
+plain fields. The type's name is up to you (`Env`, `Cfg`, ...) - it just needs to be
+**exported** (an unexported type would embed an unexported field, which the runner cannot
+inject):
+
+```go
+type MyTestSuite struct {
+	*suite.Suite[MyTestSuite, GlobalData]
+	*GlobalData // shared instance, injected into every test/subtest
+
+	// Per-test data
+	g *goldie.Goldie
+}
+
+func (s *MyTestSuite) SetupSuite() {
+	s.myVariable = myValue // promoted field - writes to the shared instance
+}
+
+func TestEntryPoint(t *testing.T) {
+	t.Parallel()
+
+	globals := &GlobalData{myVariable: myValue}
+	suite.Run[MyTestSuite](t, globals) // G inferred; the same instance s.myVariable writes to
+}
+```
+
+**3. Construct it at the call site** - `Run` accepts the shared instance as an optional
+argument, in which case `G` is inferred from its type. This runs before any test, so it can
+replace `SetupSuite` for the common "build the DB/client" case:
+
+```go
+func TestEntryPoint(t *testing.T) {
+	t.Parallel()
+
+	globals := &GlobalData{myVariable: myValue}
+	suite.Run[MyTestSuite](t, globals)
+}
+```
+
+Only **one** `globals` argument may be passed to `Run` - passing more than one is an error.
+Embedding the global data type **by value** (plain `GlobalData`, without the pointer) is
+also an error: it would be copied into every test and silently stop being shared.
+
+In all three cases, values written to the shared instance before any test starts (at the
+call site, or in `SetupSuite()` which completes before tests run) are safely visible
+everywhere. Because tests run in parallel, any concurrent *mutation* of the global data
+from inside tests/subtests must be synchronized by you (for example with a mutex).
 
 ### Per-test data in subtests
 
